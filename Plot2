@@ -1,0 +1,134 @@
+function Plot(varName, sourceStruct, subplotLayout, showPlots, savePlots, yLabelStr)
+    num_models = 7;
+    legends = {'Model1','Model2','Model3','Model4','Model5','Model6','Model7'}; % Fixed legends list
+    models = cell(1, num_models);
+    
+    % Load all models
+    for i = 1:num_models
+        data = load(sprintf('Model%d.mat', i));
+        fieldnames_data = fieldnames(data);
+        models{i} = data.(fieldnames_data{1});
+    end
+    
+    labels = {}; % expanded labels for phases
+    allData = {};
+    allT = {};
+    
+    % Extract variable from each model & each phase separately
+    for i = 1:num_models
+        struct_here = models{i};
+        if isfield(struct_here, sourceStruct)
+            s = struct_here.(sourceStruct);
+            fnames = fieldnames(s);
+            idx = find(strcmpi(fnames, varName),1);
+            if ~isempty(idx)
+                ts = s.(fnames{idx});
+                for col = 1:size(ts.Data,2)
+                    labels{end+1} = sprintf('%s_Phase%d', legends{i}, col);
+                    allT{end+1} = ts.Time(:);
+                    allData{end+1} = ts.Data(:, col);
+                end
+            end
+        end
+    end
+    
+    % Check if data found
+    if isempty(allData)
+        warning('No data found for variable "%s" in %s of any model.\nCheck variable name, sourceStruct, or .mat file structure.', varName, sourceStruct);
+        return;
+    end
+    
+    % Align time vectors (union)
+    allTimes = unique(cell2mat(allT(:)));
+    N = numel(allTimes);
+    DataMat = nan(N, numel(allData));
+    for k = 1:numel(allData)
+        t = allT{k};
+        d = allData{k};
+        if isempty(t) || isempty(d) || numel(t) ~= numel(d)
+            DataMat(:,k) = nan(N,1);
+        else
+            DataMat(:,k) = interp1(t, d, allTimes, 'linear', 'extrap');
+        end
+    end
+    
+    nCurves = numel(allData);
+    if nCurves <= 6
+        figLayout = [2 2 2];
+    else
+        figLayout = [3 2 2];
+    end
+    
+    if subplotLayout
+        idx = 1;
+        imgCount = 0;
+        colors = lines(7); % 7 distinct colors fixed
+        for nperfig = figLayout
+            imgCount = imgCount + 1;
+            if idx > nCurves
+                break;
+            end
+            hFig = figure('Visible', bool2onoff(showPlots));
+            for k = 1:nperfig
+                if idx > nCurves
+                    break;
+                end
+                subplot(nperfig, 1, k);
+                plot(allTimes, DataMat(:, idx), 'LineWidth', 2, 'Color', colors(mod(idx-1,7)+1, :));
+                grid on;
+                xlabel('Time', 'FontWeight', 'bold');
+                ylabel(yLabelStr, 'FontWeight', 'bold');
+                % Extract model number from label for title
+                tokens = regexp(labels{idx}, 'Model(\d+)', 'tokens');
+                if ~isempty(tokens)
+                    modelNum = str2double(tokens{1}{1});
+                    title(legends{modelNum}, 'FontWeight', 'bold');
+                else
+                    title(labels{idx}, 'FontWeight', 'bold');
+                end
+                set(gca, 'FontWeight', 'bold');
+                idx = idx + 1;
+            end
+            if savePlots
+                folderPath = fullfile('Results', varName, 'Images');
+                if ~exist(folderPath,'dir'), mkdir(folderPath); end
+                saveas(hFig, fullfile(folderPath, sprintf('%s_subplot_%d.png', varName, imgCount)));
+            end
+            if ~showPlots
+                close(hFig);
+            end
+        end
+    else
+        hFig = figure('Visible', bool2onoff(showPlots));
+        hold on;
+        for k = 1:size(DataMat,2)
+            plot(allTimes, DataMat(:,k), 'LineWidth', 2, 'DisplayName', labels{k});
+        end
+        hold off;
+        grid on;
+        xlabel('Time', 'FontWeight', 'bold');
+        ylabel(yLabelStr, 'FontWeight', 'bold');
+        title(['All Models: ' strrep(varName, '_', ' ')], 'FontWeight', 'bold');
+        legend(legends, 'Location', 'southeast');
+        set(gca, 'FontWeight', 'bold');
+        if savePlots
+            folderPath = fullfile('Results', varName, 'Images');
+            if ~exist(folderPath,'dir'), mkdir(folderPath); end
+            saveas(hFig, fullfile(folderPath, sprintf('%s_allinone.png', varName)));
+        end
+        if ~showPlots
+            close(hFig);
+        end
+    end
+    
+    % Save CSV with expanded labels
+    csvFolder = fullfile('Results', varName);
+    if ~exist(csvFolder,'dir'), mkdir(csvFolder); end
+    csvFilePath = fullfile(csvFolder, 'Data.csv');
+    tbl = array2table([allTimes DataMat], 'VariableNames', ['Time', labels]);
+    writetable(tbl, csvFilePath);
+end
+
+function v = bool2onoff(b)
+    if b, v='on'; else, v='off'; end
+end
